@@ -1,0 +1,88 @@
+- name: setup nginx with docker
+  hosts: main_server
+  vars:
+    dest_dir: "/web-server"
+    domen: ""
+    email: ""
+  tasks:
+    - name: Create proj dir
+      file:
+        path: "{{ dest_dir }}"
+        state: directory
+        mode: '0755'
+      ignore_errors: true
+
+    - name: Setup docker network 
+      command: |
+        docker network create site-network
+      ignore_errors: true
+
+    - name: Setup nginx docker compose 
+      copy:
+        src: ./templates/docker-compose.yml
+        mode: '0644'
+        dest: "{{ dest_dir }}/docker-compose.yml"
+
+    - name: Setup nginx conf file 
+      template:
+        src: ./templates/nginx.conf
+        mode: '0644'
+        dest: "{{ dest_dir }}/nginx.conf"
+
+    - name: Stop docker compose
+      command: docker compose down
+      args:
+        chdir: "{{ dest_dir }}"
+
+    - name: Run nginx
+      command: |
+        docker compose up web-server -d
+      args:
+        chdir: "{{ dest_dir }}"
+        
+    - name: Get ssl 
+      command: |
+        docker run --rm \
+        -v "{{ dest_dir }}/letsencrypt:/etc/letsencrypt" \
+        -v "{{ dest_dir }}/www:/var/www/html" \
+        certbot/certbot certonly --webroot \
+        -w /var/www/html \
+        -d "{{ domen }}" \
+        -d "www.{{ domen }}" \
+        --email "{{ email }}" \
+        --agree-tos \
+        --no-eff-email \
+        --force-renewal \
+        --preferred-challenges http 
+      args:
+        chdir: "{{ dest_dir }}"
+
+    - name: Добавляем SSL блок в конфиг Nginx
+      blockinfile:
+        path: "{{ dest_dir }}/nginx.conf"
+        insertafter: "http {"
+        marker: "# {mark} SSL BLOCK"
+        block: |
+          server {
+            listen 443 ssl;
+            server_name {{ domen }} www.{{ domen }};
+
+            ssl_certificate /etc/letsencrypt/live/{{ domen }}/fullchain.pem;
+            ssl_certificate_key /etc/letsencrypt/live/{{ domen }}/privkey.pem;
+
+            location / {
+              return 404;
+            }
+          }
+      notify: restart nginx
+
+    - name: Run re create certbot
+      command: |
+        docker compose up certbot -d
+      args:
+        chdir: "{{ dest_dir }}"
+
+
+  handlers:
+    - name: restart nginx
+      command: docker restart nginx
