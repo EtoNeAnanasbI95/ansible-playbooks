@@ -1,0 +1,93 @@
+- name: Setup deb env
+  hosts: main_server
+  vars:
+    user: "main"
+    docker_install: true
+  tasks:
+    - name: Ensure apt cache is up to date
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: safe
+      become: true
+
+    - name: Install dependencies
+      ansible.builtin.apt:
+        name:
+          - zsh
+          - git
+          - curl
+          - neofetch
+          - neovim
+        state: present
+      become: true
+
+    - name: Set shell to zsh
+      become: true
+      ansible.builtin.user:
+        name: "{{ user }}"
+        shell: /bin/zsh
+
+    - name: Ensure omz not installed
+      ansible.builtin.stat:
+        path: "{{ ansible_env.HOME }}/.oh-my-zsh"
+      register: omz_stat
+
+    - name: Install oh-my-zsh
+      ansible.builtin.shell: >
+        sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh) --unattended"
+      when: not omz_stat.stat.exists
+      register: ohmyzsh_install
+      changed_when: ohmyzsh_install.rc == 0
+
+    - name: Clone zsh-autosuggestions plugin
+      ansible.builtin.git:
+        repo: https://github.com/zsh-users/zsh-autosuggestions.git
+        dest: "{{ ansible_env.HOME }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+        depth: 1
+
+    - name: Clone zsh-syntax-highlighting plugin
+      ansible.builtin.git:
+        repo: https://github.com/zsh-users/zsh-syntax-highlighting.git
+        dest: "{{ ansible_env.HOME }}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+        depth: 1
+
+    - name: Clone fast-syntax-highlighting plugin
+      ansible.builtin.git:
+        repo: https://github.com/zdharma-continuum/fast-syntax-highlighting.git
+        dest: "{{ ansible_env.HOME }}/.oh-my-zsh/custom/plugins/fast-syntax-highlighting"
+        depth: 1
+
+    - name: Clone zsh-autocomplete plugin
+      ansible.builtin.git:
+        repo: https://github.com/marlonrichert/zsh-autocomplete.git
+        dest: "{{ ansible_env.HOME }}/.oh-my-zsh/custom/plugins/zsh-autocomplete"
+        depth: 1
+
+    - name: Update .zshrc with zsh plugins
+      ansible.builtin.lineinfile:
+        path: "{{ ansible_env.HOME }}/.zshrc"
+        regexp: '^plugins=\(git\)'
+        line: 'plugins=(git zsh-autosuggestions zsh-syntax-highlighting fast-syntax-highlighting zsh-autocomplete)'
+        backrefs: true
+
+    - name: Download docker install script
+      ansible.builtin.get_url:
+        url: https://get.docker.com
+        dest: /tmp/install-docker.sh
+        mode: '0755'
+      become: true
+
+    - name: Run docker install script
+      ansible.builtin.command: /tmp/install-docker.sh
+      args:
+        creates: /usr/bin/docker
+      become: true
+      when: docker_install
+
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: "{{ user }}"
+        group: docker
+        append: true
+      become: true
+      when: user != "root" and docker_install
